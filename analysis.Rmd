@@ -1,0 +1,559 @@
+---
+title: "R Project: Real Estate Price Determinants"
+author: "Raphaël Henry & Julian Ansarinasab"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true         
+    toc_depth: 2        
+    number_sections: true
+header-includes:
+  - \usepackage{titlesec}
+  - \titlelabel{\thetitle.\quad}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(readxl)
+library(dplyr)
+library(kableExtra)
+library(ggplot2)
+```
+
+\newpage
+
+# Sworn Statement
+
+We hereby declare, on our honour, that this report was written entirely by us, without any unauthorised external assistance. It has not been previously submitted for assessment and has never been published, in whole or in part. All passages, phrases, or ideas including tables, figures, charts, or maps that are borrowed from or refer to other sources, are fully and properly cited, without exception.
+
+# Introduction
+
+We are currently living in a world where real estate prices often continue to rise in many regions, to the point where numerous households struggle to find housing that fits their financial means. This economic pressure also forces many young adults to remain living with their parents, unable to afford the cost of housing on their own.
+
+Living in London, one of the most expensive cities in the world, where real estate prices can reach staggering levels, we have been directly confronted with this reality. This experience has led us to question the true determinants of the real estate market. In particular, we wondered why cities with similar population sizes can display significantly different housing prices. With this in mind, we decided to focus our study on the French real estate market in order to better understand regional disparities and the factors shaping them.
+
+
+This project aims to analyze the determinants of real estate prices in France. Using data from 2022, we investigate how socio-economic factors such as median income, unemployment rate, and population density influence the price per square meter of housing. We collected data from official French government sources (Data.Gouv and INSEE) to build a robust database containing over 30,000 municipalities. Our approach will begin with a presentation of the selected data and variables. We will then carry out estimations with confidence intervals, followed by a comparison of two groups using a hypothesis test, and finally, we will conclude our analysis with a chi-square independence test.
+
+# Data merging
+
+The first step of our analysis was to build our database. In fact, given that we had three different databases, we had to merge them into one. The first one is from Data.Gouv and provides data about real estate prices for each municipality ; while the two other ones come from INSEE and provide socio-economic indicators as well as the type of municipality (rural or urban). See the appendix for more details. 
+
+Given that Data.Gouv statistics depend directly on recorded real estate transactions, some municipalities have no available data due to the absence of property sales or purchases. As a result, our sample size is approximately equal to ~31,000 (while the total number of French municipalities is about 35,000). 
+
+# Description of data
+
+
+```{r import_data}
+
+data_final <- read_excel("Base_Finale.xlsx")
+
+data_final$Revenu_Median <- as.numeric(data_final$Revenu_Median)
+data_final$Taux_Chomage <- as.numeric(data_final$Taux_Chomage)
+data_final$Prix_m2 <- as.numeric(data_final$Prix_m2)
+data_final$Densite <- as.numeric(data_final$Densite)
+
+# Sample size :
+n <- nrow(data_final)
+```
+
+## Definition of population and variables
+
+The statistical units studied in this project are the **municipalities of mainland France**. The reference population consists of all municipalities present in both the Data.gouv "DVF file" (sales) and INSEE databases. After merging and cleaning the data, our final sample size is equal to **`r n`** municipalities.
+
+Our dependent variable is the **Average Real Estate Price** (`Prix_m2`), expressed in Euros per square meter (€/m²). It is a quantitative continuous variable representing the average buying price of housing in a given municipality. To explain this price, we selected four explanatory variables. 
+
+The variables are summarized below:
+
+```{r var_table, echo=FALSE}
+# creating the table
+var_desc <- data.frame(
+  "Variable Name" = c("Average Price", "Median Income", "Unemployment Rate", "Density", "Zone Type"),
+  "R Variable" = c("Prix_m2", "Revenu_Median", "Taux_Chomage", "Densite", "Type_Zone"),
+  "Type" = c("Quant. Continuous", "Quant. Continuous", "Quant. Continuous", "Quant. Continuous", "Categorical"),
+  "Unit" = c("€/m²", "€/year", "%", "Inhab./km²", "N/A"),
+  "Description" = c("Target variable to explain", "Standard of living indicator", "Economic health indicator", "Population concentration", "Urban vs Rural classification"),
+  check.names = FALSE
+)
+
+# We wanted to redesign the table, hence we used the following command:
+kable(var_desc, caption = "Summary of Variables") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = F) %>%
+  column_spec(1, bold = TRUE)
+```
+*NB: After researching, we found the `kable` command, which is excellent for displaying formatted tables.*
+
+## Description of variables
+### Average Real Estate Price
+
+The variable `Prix_m2` is quantitative continuous.
+
+```{r description_price, fig.height=4, fig.width=6, fig.align='center'}
+# Summary statistics
+summary(data_final$Prix_m2)
+
+# Histogram
+hist(data_final$Prix_m2, 
+     main = "Distribution of Real Estate Prices per m²", 
+     xlab = "Price (€/m²)", 
+     col = "lightblue", 
+     border = "white",
+     breaks = 50,
+     cex.main = 0.9,  # We shrank the titles and numbers
+     cex.lab = 0.8,
+     cex.axis = 0.8)
+```
+**Comment:** The distribution is right-skewed. The majority of municipalities have prices between 1,000 and 3,000 €/m². High values correspond to major urban centers and exclusive coastal areas.
+
+### Median Income (`Revenu_Median`)
+
+```{r description_income, fig.height=4, fig.width=6, fig.align='center'}
+hist(data_final$Revenu_Median, 
+     main = "Distribution of Median Income", 
+     xlab = "Annual Income (€)", 
+     col = "lightgreen", 
+     border = "white",
+     breaks = 40,
+     cex.main = 0.9,
+     cex.lab = 0.8,
+     cex.axis = 0.8)
+```
+**Comment:** The income distribution is bell-shaped and centered around 22,000 €, suggesting a normal distribution.
+
+### Unemployment Rate (`Taux_Chomage`)
+
+```{r description_unemp, fig.height=4, fig.width=6, fig.align='center'}
+hist(data_final$Taux_Chomage, 
+     main = "Distribution of Unemployment Rate", 
+     xlab = "Unemployment Rate (%)", 
+     col = "plum", 
+     border = "white",
+     breaks = 30,
+     cex.main = 0.9,
+     cex.lab = 0.8,
+     cex.axis = 0.8)
+```
+**Comment:** Most municipalities have an unemployment rate between 5% and 10%, with a few areas suffering from significantly higher rates.
+
+### Zone Type (`Type_Zone`)
+
+This categorical variable classifies municipalities as "Urban" or "Rural".
+
+```{r description_zone}
+# Frequency table
+tab_zone <- table(data_final$Type_Zone)
+prop_zone <- prop.table(tab_zone)
+
+# Formatting the table
+resume_zone <- rbind(Count = tab_zone, Frequency = round(prop_zone, 2))
+
+kable(resume_zone, caption = "Distribution of Municipalities by Zone Type") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+```{r graph_zone, fig.height=3, fig.width=4, fig.align='center'}
+barplot(tab_zone, 
+        main = "Number of Municipalities: Urban vs Rural",
+        ylab = "Count",
+        col = c("orange", "cornflowerblue"),
+        border = "white",
+        cex.main = 0.9,
+        cex.names = 0.8,
+        cex.lab = 0.8,
+        cex.axis = 0.8)
+```
+**Comment:** Not surprisingly, there is a larger number of rural municipalities, reflecting the administrative fragmentation of the French territory.
+
+# Point and Interval Estimation
+
+We aim to estimate the unknown population parameter $\mu$, which corresponds to the **true mean price per square meter** of all French municipalities.
+
+## Point Estimation
+
+We will use the sample mean $\bar{X}$ as an unbiased point estimator for $\mu$.
+
+```{r point_estimation}
+# Calculation of the sample mean (Point Estimate)
+mean_est <- mean(data_final$Prix_m2)
+
+# Calculation of standard deviation (s) and sample size (n)
+sd_est <- sd(data_final$Prix_m2)
+
+# Checking
+n <- nrow(data_final)
+
+# Display the mean
+mean_est
+```
+
+**Result:** The point estimate for the average real estate price in France is **`r round(mean_est, 2)` €/m²**. This figure is consistent with the observation of the histogram of the Average Real Estate Price (see 4.2.1). 
+
+*NB : It is important to note that this figure does not correspond to the average price per square meter among all property transactions in France. In fact, since most property transactions take place in large cities, where property prices are often higher, the average price of property transactions in France tends to be significantly higher than our figure. Our figure must be interpreted as follows : if we choose a random municipality among all French municipalities, on average, we would have to pay €1,935.3 for the purchase of one square meter.*
+
+## Confidence Interval Estimation
+
+The distribution of the average real estate price is unknown. However, since the observations can be considered independent and identically distributed and since our sample size is extremely large ($n = `r n` > 30$), we apply the **Central Limit Theorem**. We can approximate the distribution of the mean with a Normal distribution, even if the underlying data is not perfectly normal.
+
+The formula for the confidence interval is:
+$$IC_{1-\alpha} = \left[ \bar{x} - z_{1-\alpha/2} \frac{s'}{\sqrt{n}} \ ; \ \bar{x} + z_{1-\alpha/2} \frac{s'}{\sqrt{n}} \right]$$
+Since the theoretical variance of the population is unknown, we use the corrected variance estimated from the sample. Based on this estimate, we construct two confidence intervals, one at the 90% confidence level and the other at the 95% confidence level.
+
+```{r conf_intervals}
+# Calculation of the standard error
+standard_error <- sd_est / sqrt(n)
+
+# 90% Confidence Interval (alpha = 10%)
+alpha_90 <- 0.10
+z_90 <- qnorm(1 - alpha_90 / 2) # Critical value (approx 1.645)
+
+lower_90 <- mean_est - z_90 * standard_error
+upper_90 <- mean_est + z_90 * standard_error
+
+# 95% Confidence Interval (alpha = 5%)
+alpha_95 <- 0.05
+z_95 <- qnorm(1 - alpha_95 / 2) # Critical value (approx 1.96)
+
+lower_95 <- mean_est - z_95 * standard_error
+upper_95 <- mean_est + z_95 * standard_error
+
+# We need to format results for display
+res_CI <- data.frame(
+  Level = c("90%", "95%"),
+  Lower_Bound = round(c(lower_90, lower_95), 2),
+  Upper_Bound = round(c(upper_90, upper_95), 2),
+  Margin_Error = round(c(z_90 * standard_error, z_95 * standard_error), 2)
+)
+
+
+# Display with Kable
+kable(res_CI, caption = "Confidence Intervals for Mean Price") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Interpretation:**
+
+* **At the 90% confidence level**, we estimate that the true average price in France lies between 
+  **[`r round(lower_90, 2)` ; `r round(upper_90, 2)`] €/m²**.
+* **At the 95% confidence level**, the interval widens slightly to **[`r round(lower_95, 2)` ; `r round(upper_95, 2)`] €/m²**.
+
+**Comment:**
+The intervals are extremely narrow (the margin of error is very small, less than 20€). This high precision is a direct result of our massive sample size ($n \approx 30,000$). Mathematically, as $n$ increases, the standard error $\frac{s}{\sqrt{n}}$ tends toward 0, shrinking the confidence interval.
+
+# Conformity Test 
+
+We conduct a conformity test (one-sample t-test) to check if our sample mean differs significantly from a theoretical value.
+
+**Scenario:** According to major national real estate reports (e.g. SeLoger.com, Century 21), the average price per square meter for transactions in France is often reported around **2,500 €/m²**. However, as mentioned in section 5.1, this market figure is usually weighted by transaction volume, heavily influenced by large, expensive cities. We aim to test whether this "market consensus" applies to the **typical French municipality**. In other words, we test if the non-weighted average price of a randomly selected municipality is equal to this widely cited market reference.
+
+We define our hypotheses as follows:
+
+$$
+\begin{cases}
+H_0: \mu = 2500 \quad (\text{The true mean is equal to 2,500 €}) \\
+H_1: \mu \neq 2500 \quad (\text{The true mean is different from 2,500 €})
+\end{cases}
+$$
+
+
+## Test at 5% Significance Level ($\alpha = 0.05$)
+
+```{r test_conf_5}
+# Theoretical mean we want to test
+mu_0 <- 2500
+
+# T-test (two-sided) with 95% confidence level
+test_5 <- t.test(data_final$Prix_m2, mu = mu_0, alternative = "two.sided", 
+                 conf.level = 0.95)
+
+# We build a table in order to present the results better
+res_test_5 <- data.frame(
+  "Statistic_t" = round(test_5$statistic, 2),
+  "P_Value" = format.pval(test_5$p.value, digits = 3, eps = 0.001), 
+  "Lower_Bound" = round(test_5$conf.int[1], 2),
+  "Upper_Bound" = round(test_5$conf.int[2], 2),
+  "Mean_Estimate" = round(test_5$estimate, 2)
+)
+
+# Display result (we use Kable)
+kable(res_test_5, caption = "T-Test Results (Alpha = 5\\%)") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Decision Rule:**
+Since the p-value (`r res_test_5$P_Value`) is strictly lower than $\alpha = 0.05$, we **reject the Null Hypothesis $H_0$**. We have sufficient evidence to state that the average price is significantly different from 2,500 €. The 95% confidence interval is [`r res_test_5$Lower_Bound`; `r res_test_5$Upper_Bound`], which does not contain 2,500.
+
+## Test at 10% Significance Level ($\alpha = 0.10$)
+
+```{r test_conf_10}
+# T-test with 90% confidence level
+test_10 <- t.test(data_final$Prix_m2, mu = mu_0, alternative = "two.sided", 
+                  conf.level = 0.90)
+
+# Again we build a table in order to present the results better
+res_test_10 <- data.frame(
+  "Statistic_t" = round(test_10$statistic, 2),
+  "P_Value" = format.pval(test_10$p.value, digits = 3, eps = 0.001),
+  "Lower_Bound" = round(test_10$conf.int[1], 2),
+  "Upper_Bound" = round(test_10$conf.int[2], 2),
+  "Mean_Estimate" = round(test_10$estimate, 2)
+)
+
+# Display result
+kable(res_test_10, caption = "T-Test Results (Alpha = 10\\%)") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Decision Rule:**
+Since the p-value (`r res_test_10$P_Value`) is also lower than $\alpha = 0.10$, we **reject $H_0$** at the 10% significance level as well.
+The 90% confidence interval is [`r res_test_10$Lower_Bound`; `r res_test_10$Upper_Bound`], which is narrower but still does not include the value 2,500.
+
+**Global Conclusion on Conformity:**
+Regardless of the risk level (5% or 10%), our data clearly contradicts the hypothetical claim of 2,500 €/m². The actual average price (approx. 1,935 €) is significantly lower than this reference value.
+
+# Comparison of Two Subgroups
+
+We wish to compare the average real estate prices between two specific subgroups of our population: **urban** municipalities and **rural** municipalities.
+
+We define two independent samples:
+
+- Sample 1: Prices in **Urban** areas ($n_1$, $\mu_1$, $\sigma_1^2$)
+- Sample 2: Prices in **Rural** areas ($n_2$, $\mu_2$, $\sigma_2^2$)
+
+**Step 1: Test for Equality of Variances**
+
+Before comparing the means, we must check if the variances of the two groups are equal.
+
+$$
+\begin{cases}
+H_0: \sigma_1^2 = \sigma_2^2 \quad (\text{Variances are equal}) \\
+H_1: \sigma_1^2 \neq \sigma_2^2 \quad (\text{Variances are different})
+\end{cases}
+$$
+
+```{r var_test_groups}
+# Extracting data
+prices_urban <- data_final$Prix_m2[data_final$Type_Zone == "Urbain"]
+prices_rural <- data_final$Prix_m2[data_final$Type_Zone == "Rural"]
+
+# Test for variances
+var_test <- var.test(prices_urban, prices_rural, alternative = "two.sided")
+
+res_var <- data.frame(
+  "Ratio_of_variances" = round(var_test$estimate, 2),
+  "P_Value" = format.pval(var_test$p.value, digits = 3, eps = 0.001),
+  "Conf_Int_Low" = round(var_test$conf.int[1], 2),
+  "Conf_Int_High" = round(var_test$conf.int[2], 2)
+)
+
+kable(res_var, caption = "Equality of Variances Test Results") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Conclusion on Variances:**
+Since the p-value is extremely low (< 0.05), we reject the null hypothesis. The variances are **not equal**. Consequently, we will perform a **Two-sample t-test** (comparison of means) which does not assume equal variances in order to compare the means.
+
+\newpage
+
+**Step 2: Comparison of Means (Two-sample t-test)**
+
+We test if there is a significant difference between the average price in Urban areas and in Rural areas.
+
+$$
+\begin{cases}
+H_0: \mu_1 = \mu_2 \quad (\text{Average prices are identical}) \\
+H_1: \mu_1 \neq \mu_2 \quad (\text{Average prices are different})
+\end{cases}
+$$
+
+## Test at 5% Significance Level ($\alpha = 0.05$)
+
+```{r t_test_groups_5}
+# We use 'two.sided' to see if there is a difference, and get the CI of that difference
+ttest_5 <- t.test(prices_urban, prices_rural, alternative = "two.sided", var.equal = FALSE, conf.level = 0.95)
+
+# here we format the results
+res_ttest_5 <- data.frame(
+  "Difference_Mean" = round(ttest_5$estimate[1] - ttest_5$estimate[2], 2),
+  "Statistic_t" = round(ttest_5$statistic, 2),
+  "P_Value" = format.pval(ttest_5$p.value, digits = 3, eps = 0.001),
+  "Lower_Bound_Diff" = round(ttest_5$conf.int[1], 2),
+  "Upper_Bound_Diff" = round(ttest_5$conf.int[2], 2)
+)
+
+kable(res_ttest_5, caption = "Comparison of Means Results (Alpha = 5\\%)") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Decision:**
+The p-value is practically zero. We **reject $H_0$**. There is a significant difference between urban and rural prices.
+At 95% confidence level, Urban areas are on average between **`r res_ttest_5$Lower_Bound_Diff` €/m²** and **`r res_ttest_5$Upper_Bound_Diff` €/m²** more expensive than Rural areas.
+
+## Test at 10% Significance Level ($\alpha = 0.10$)
+
+```{r t_test_groups_10}
+# Same test with 90% confidence level
+ttest_10 <- t.test(prices_urban, prices_rural, alternative = "two.sided", var.equal = FALSE, conf.level = 0.90)
+
+# Formatting results
+res_ttest_10 <- data.frame(
+  "Difference_Mean" = round(ttest_10$estimate[1] - ttest_10$estimate[2], 2),
+  "Statistic_t" = round(ttest_10$statistic, 2),
+  "P_Value" = format.pval(ttest_10$p.value, digits = 3, eps = 0.001),
+  "Lower_Bound_Diff" = round(ttest_10$conf.int[1], 2),
+  "Upper_Bound_Diff" = round(ttest_10$conf.int[2], 2)
+)
+
+kable(res_ttest_10, caption = "Comparison of Means Results (Alpha = 10\\%)") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Global Comment:**
+At a Type I error risk of 5%, we conclude that the average price per m² is significantly higher in urban areas than in rural areas. Increasing the Type I error risk to 10% does not change this conclusion. Thus, the results are consistent for both significance levels. The p-value remains very small, confirming that **Urban municipalities are significantly more expensive than Rural ones**. The positive difference observed in the confidence intervals confirms the "Urban Premium" in the real estate market.
+
+# Chi-square Test of Independence 
+
+We want to evaluate the existence of a statistical relationship between the **Real Estate Prices** and the **Unemployment Rate**. To determine whether these two variables are dependent, we decided to perform a chi-square test of independence, assuming that the variables are independent of each other.
+
+Since both variables are quantitative, we first need to separate them into categorical classes to perform a Chi-square ($\chi^2$) test of independence. We decided to divide both variables into three categories: Low, Medium, and High.
+
+We define our hypotheses:
+$$
+\begin{cases}
+H_0: \text{The variables are independent} \\
+H_1: \text{The variables are dependent (associated)}
+\end{cases}
+$$
+
+## Data Preparation and Contingency Table
+
+We divide both variables into 3 equal classes based on their quantiles (tertiles).
+
+```{r chi_square_prep}
+# Dividing prices into 3 classes (low, medium, high):
+breaks_price <- quantile(data_final$Prix_m2, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+data_final$Price_Class <- cut(data_final$Prix_m2, breaks = breaks_price, 
+                              include.lowest = TRUE, labels = c("Low", "Medium", "High"))
+
+# Dividing unemployment into 3 classes (low, medium, high):
+breaks_unemp <- quantile(data_final$Taux_Chomage, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+data_final$Unemp_Class <- cut(data_final$Taux_Chomage, breaks = breaks_unemp, 
+                              include.lowest = TRUE, labels = c("Low", "Medium", "High"))
+
+# We create a contingency table (observed frequencies)
+table_obs <- table(data_final$Unemp_Class, data_final$Price_Class)
+
+# Displaying the table
+kable(addmargins(table_obs), caption = "Contingency Table: Unemployment vs Price") %>%
+  kable_styling(latex_options = "hold_position")
+```
+**Comment:** We constructed a contingency table, which allows us to cross-tabulate price (in rows) and unemployment (in columns), and enables us to visualize the distribution of municipalities according to these two criteria.
+
+## Conducting the Test
+
+We perform the independence test at 5% and 10% significance levels.
+
+```{r chi_square_test}
+# the test :
+chisq_res <- chisq.test(table_obs)
+
+# summary for the result :
+res_chisq <- data.frame(
+  "Chi_Square_Stat" = round(chisq_res$statistic, 2),
+  "Degrees_of_Freedom" = chisq_res$parameter,
+  "P_Value" = format.pval(chisq_res$p.value, digits = 3, eps = 0.001)
+)
+
+# Displaying results
+kable(res_chisq, caption = "Chi-Square Test Results") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Interpretation and Conclusion:**
+
+* **P-value Analysis:** The p-value is extremely low (`r res_chisq$P_Value`), well below both thresholds ($\alpha = 0.05$ and $\alpha = 0.10$).
+* **Decision:** We **reject the Null Hypothesis ($H_0$)**.
+* **Comment:** There is a significant dependence between the Unemployment Rate and Real Estate Prices. These two economic variables are not independent; areas with high unemployment tend to have different pricing structures compared to areas with low unemployment.
+
+## Visualization of the Dependence
+
+To visualize this link, we use a plot. The width of the columns represents the proportion of unemployment classes, and the colors represent the distribution of prices within those classes.
+
+```{r plot, fig.height=5, fig.width=6, fig.align='center'}
+plot(table_obs, 
+     main = "Plot: Unemployment vs Price",
+     xlab = "Unemployment Level",
+     ylab = "Price Level",
+     col = c("lightblue", "cornflowerblue", "darkblue"),
+     border = "white")
+```
+**Comment:** The graph generated in R helps us identify general trends. We observe that communes with low unemployment rates are over-represented in the high-price classes, while communes with high unemployment rates tend to have lower prices per m². Hence, this analysis highlights a negative correlation between the price per m² and the unemployment rate across municipalities.
+
+\newpage
+
+# Conclusion
+
+In conclusion, this study highlights significant differences in the average price per square meter across French municipalities. The statistical analyses show that real estate prices vary considerably according to the economic and social characteristics of each area. In particular, the unemployment rate is negatively correlated with the price per square meter, meaning that municipalities with higher unemployment rates tend to have lower real estate prices.
+At the same time, urban municipalities display higher average prices per square meter than rural ones. This difference can be explained by the fact that urban areas concentrate more jobs, attract larger populations and generally benefit from higher income levels, which strengthens housing demand and consequently drives prices upward.
+Overall, these results indicate that real estate prices evolve in line with local economic conditions. When economic activity is strong, characterized by higher employment levels and greater incomes, housing demand increases, leading to higher real estate prices. This mechanism helps explain why cities such as Paris, where job opportunities and economic attractiveness are particularly high, have exorbitant real estate prices.
+
+\vspace{3cm}
+
+**Appendix**
+
+This is the code we used to merge the different databases : 
+
+```{r nom_du_bloc, eval=FALSE}
+library(dplyr)
+library(readxl)
+
+# ETAPE 1 : FICHIER PRIX (DVF)*
+df_prix <- read.csv("dvf2022.csv", 
+                    sep = ",",
+                    dec = ".", 
+                    header = TRUE, 
+                    colClasses = c("INSEE_COM" = "character")) 
+
+df_prix_clean <- df_prix %>%
+  filter(!grepl("^97", INSEE_COM)) %>%
+  select(code_commun = INSEE_COM,
+         Prix_m2 = Prixm2Moyen)
+
+# ETAPE 2 : FICHIER SOCIO-ECO (INSEE)*
+df_insee <- read_excel("base_cc_comparateur.xlsx", 
+                       sheet = "COM", 
+                       skip = 5)
+
+df_insee_clean <- df_insee %>%
+  mutate(CODGEO = as.character(CODGEO)) %>%
+  select(code_commun = CODGEO, 
+         Population = P22_POP,
+         Revenu_Median = MED21,
+         Superficie = SUPERF,
+         Chomage = P22_CHOM1564,
+         Pop_Active = P22_ACT1564) %>%
+  mutate(
+    Densite = Population / Superficie,
+    Taux_Chomage = (Chomage / Pop_Active) * 100
+  )
+
+# ETAPE 3 : FICHIER GRILLE DENSITÉ*
+df_grille <- read_excel("grille_densite_7_niveaux_2023.xlsx", 
+                        sheet = 1,
+                        skip = 4)
+
+df_grille_clean <- df_grille %>%
+  mutate(CODGEO = as.character(CODGEO)) %>%
+  select(code_commun = CODGEO, 
+         Niveau_Densite = DENS) %>%
+  mutate(
+    Type_Zone = ifelse(Niveau_Densite <= 3, "Urbain", "Rural")
+  )
+
+# ETAPE 4 : FUSION FINALE*
+base_temp <- merge(df_prix_clean, df_insee_clean, by = "code_commun")
+# Ajout de l'autre fichier*
+base_finale <- merge(base_temp, df_grille_clean, by = "code_commun")
+
+cat("Nombre de communes finales :", nrow(base_finale))
+head(base_finale)
+```
